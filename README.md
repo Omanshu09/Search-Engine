@@ -130,21 +130,64 @@ ATLAS is designed to run in a reduced mode with no external services
 configured: without `LLM_PROVIDER`/`LLM_API_KEY` set, research falls back to
 extractive summarization instead of failing.
 
-## Deployment notes
+## Deploying a public demo (backend on Render, frontend on Vercel)
 
-- The backend needs outbound internet access (for `ddgs` seed discovery,
-  crawling target pages, and any configured LLM/embedding API), so it must
-  run on a host that allows egress — a serverless/offline sandbox won't work.
+Both platforms deploy free from your existing GitHub repo — no infra to manage.
+
+### 1. Backend → Render
+
+1. Push this repo to GitHub (already done).
+2. On [render.com](https://render.com), **New → Web Service**, connect the repo.
+3. Render detects the `Dockerfile` automatically — leave build/start commands blank.
+4. Set environment variables under the service's **Environment** tab (mirror
+   `.env.example`): at minimum `ALLOWED_ORIGINS` (set this *after* step 2 of
+   the frontend section, once you know the Vercel URL), and optionally
+   `LLM_PROVIDER` / `LLM_API_KEY` if you want LLM-synthesized research answers
+   instead of the extractive fallback.
+5. Deploy. Render gives you a URL like `https://atlas-backend.onrender.com`.
+   Confirm it works: `https://atlas-backend.onrender.com/docs` should show
+   the FastAPI docs UI.
+
+Free-tier note: Render's free web services spin down after inactivity, so
+the *first* request after idling can take ~30-60s to wake up — combined with
+ATLAS's own live crawl, a cold first query can feel slow. Worth mentioning
+in your LinkedIn post so a recruiter doesn't bail on the first request, or
+upgrade to a paid instance to avoid it.
+
+### 2. Frontend → Vercel
+
+1. On [vercel.com](https://vercel.com), **New Project**, import the same repo.
+2. Set **Root Directory** to `frontend`.
+3. Add an environment variable: `VITE_API_BASE_URL` =
+   `https://atlas-backend.onrender.com/api` (your Render URL + `/api`).
+4. Deploy. Vercel gives you a URL like `https://atlas-yourname.vercel.app` —
+   **this is the link you put on LinkedIn/your resume.**
+
+### 3. Close the loop on CORS
+
+Go back to Render, set `ALLOWED_ORIGINS=["https://atlas-yourname.vercel.app"]`
+(your actual Vercel URL), and redeploy the backend. Without this step the
+frontend will load but every API call will fail with a CORS error in the
+browser console.
+
+### 4. Verify end to end
+
+Open the Vercel URL, run a search or research query, and confirm results
+come back. Check Render's logs tab if something fails — most first-deploy
+issues are either a missing env var or the CORS origin not matching exactly
+(including `https://` and no trailing slash).
+
+## Other deployment notes
+
+- The backend needs **outbound internet access** (for `ddgs` seed discovery,
+  crawling target pages, and any configured LLM/embedding API) — this rules
+  out fully offline/sandboxed hosts, but Render/Railway/Fly.io all allow it.
 - There is no persistence yet: the index and document store are in-memory
-  per process. On a multi-worker/multi-instance deployment, each worker
-  builds its own index per request; this is fine functionally but means no
-  shared cache across workers. Add persistence (see `index_manager.py`) if
-  you want that.
+  per process. Fine for a demo; add persistence (see `index_manager.py`) if
+  you want results to survive restarts or scale across workers.
 - Be a good citizen: `CRAWLER_USER_AGENT`, `CRAWLER_REQUEST_TIMEOUT_SECONDS`,
   and `MAX_CRAWL_CONCURRENCY` in `.env` control how ATLAS crawls; robots.txt
   is always respected.
-- Set `ALLOWED_ORIGINS` in `.env` to your deployed frontend's real origin
-  before going live — it currently only allows `localhost:5173`.
 
 ## Roadmap
 

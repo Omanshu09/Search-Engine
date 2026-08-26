@@ -1,8 +1,13 @@
 /**
  * Thin fetch wrapper around the ATLAS backend API.
- * Base path "/api" is proxied to the backend in dev (see vite.config.js).
+ *
+ * In local dev, "/api" is proxied to the backend by Vite (see vite.config.js).
+ * In production, frontend and backend are deployed separately, so
+ * VITE_API_BASE_URL must be set at build time to the backend's public URL
+ * (e.g. "https://atlas-backend.onrender.com/api"). Set it in your hosting
+ * provider's environment variables, or in a .env file (see .env.example).
  */
-const BASE_URL = "/api";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 
 async function request(path, options = {}) {
   const response = await fetch(`${BASE_URL}${path}`, {
