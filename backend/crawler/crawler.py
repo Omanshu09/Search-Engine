@@ -8,10 +8,9 @@ ATLAS does not run its own always-on, whole-web crawl (that would require
 the "enormous infrastructure" the project spec explicitly says to avoid).
 Instead, `discover_seed_urls` uses a lightweight web-search library purely
 to find candidate URLs for a given query; ATLAS then does its own fetching,
-parsing, indexing, and ranking of those pages. That keeps retrieval,
-indexing, and ranking as ATLAS's own implementation while sidestepping the
-need to build and host a general-purpose web crawler.
+parsing, indexing, and ranking of those pages.
 """
+
 from typing import List, Optional
 
 from backend.crawler.url_manager import URLManager
@@ -42,93 +41,174 @@ class Crawler:
 
     def discover_seed_urls(self, query: str, limit: int = 8) -> List[str]:
         """
-        Find candidate URLs for a query using a lightweight web-search
-        library (no API key required). This is the *only* place ATLAS
-        leans on an external search provider -- purely for URL discovery,
-        not for ranking or answer synthesis.
+        Find candidate URLs using DDGS with explicit search-provider
+        fallback order.
+
+        DDGS is only used for URL discovery. ATLAS performs the actual
+        fetching, parsing, indexing, and ranking.
         """
         try:
             from ddgs import DDGS
         except ImportError:
-            logger.error("ddgs is not installed; cannot discover seed URLs. pip install ddgs")
+            logger.error(
+                "ddgs is not installed; cannot discover seed URLs. "
+                "pip install ddgs"
+            )
             return []
 
         urls: List[str] = []
-        try:
-            with DDGS() as ddgs:
-                for result in ddgs.text(query, max_results=limit):
+
+        # Try several providers explicitly. If one provider fails because
+        # of timeout, TLS, rate limiting, or blocking, try the next one.
+        backends = [
+            "bing",
+            "brave",
+            "google",
+            "mojeek",
+            "startpage",
+        ]
+
+        for backend in backends:
+            try:
+                logger.info(
+                    "Searching %r using DDGS backend=%s",
+                    query,
+                    backend,
+                )
+
+                with DDGS(timeout=8) as ddgs:
+                    results = ddgs.text(
+                        query,
+                        max_results=limit,
+                        backend=backend,
+                    )
+
+                for result in results:
                     url = result.get("href") or result.get("url")
-                    if url:
-                        urls.append(self.url_manager.normalize(url))
-        except Exception as exc:
-            # ddgs (DuckDuckGo scraping) is the one external dependency here,
-            # and it breaks *often* -- DDG rate-limits scrapers (look for
-            # "Ratelimit"/"403" in the message below) and occasionally
-            # changes its markup, both of which ddgs releases chase with
-            # breaking version bumps. requirements.txt pins ">=9.0.0" (a
-            # floating minimum), so a redeploy that reinstalls dependencies
-            # can silently pick up a newer ddgs that behaves differently --
-            # with no change to this repo's own code.
-            logger.warning(
-                "Seed URL discovery failed for %r (%s: %s). If this recurs, "
-                "check the installed ddgs version and DuckDuckGo rate limits.",
-                query, type(exc).__name__, exc,
-            )
-        if not urls:
-            logger.warning(
-                "No seed URLs found for %r -- search/research results for this "
-                "query will be empty or fall back to extractive/no-evidence answers.",
-                query,
-            )
+
+                    if not url:
+                        continue
+
+                    normalized = self.url_manager.normalize(url)
+
+                    if normalized and normalized not in urls:
+                        urls.append(normalized)
+
+                    if len(urls) >= limit:
+                        break
+
+                if urls:
+                    logger.info(
+                        "Discovered %d seed URLs for %r using backend=%s",
+                        len(urls),
+                        query,
+                        backend,
+                    )
+                    return urls
+
+            except Exception as exc:
+                logger.warning(
+                    "DDGS backend=%s failed for %r (%s: %s); "
+                    "trying next backend",
+                    backend,
+                    query,
+                    type(exc).__name__,
+                    exc,
+                )
+
+        logger.warning(
+            "All DDGS search backends failed for %r; no seed URLs found.",
+            query,
+        )
+
         return urls
 
     def crawl_url(self, url: str) -> Optional[CrawledPage]:
         """
         Fetch and parse a single URL, respecting robots.txt.
-        Returns None (and logs) on any failure instead of raising, so a
-        single bad source doesn't take down a whole search/research request.
+        Returns None on failure so one bad source does not take down
+        the entire search/research request.
         """
         normalized = self.url_manager.normalize(url)
 
         if not self.robots_checker.is_allowed(normalized):
-            logger.info("Skipping %s: disallowed by robots.txt", normalized)
+            logger.info(
+                "Skipping %s: disallowed by robots.txt",
+                normalized,
+            )
             return None
 
         try:
             fetched = self.page_fetcher.fetch(normalized)
         except FetchError as exc:
-            logger.info("Skipping %s: %s", normalized, exc)
+            logger.info(
+                "Skipping %s: %s",
+                normalized,
+                exc,
+            )
             return None
 
         try:
-            parsed = self.html_parser.parse(fetched.content, base_url=fetched.url)
+            parsed = self.html_parser.parse(
+                fetched.content,
+                base_url=fetched.url,
+            )
         except Exception as exc:
-            logger.info("Failed to parse %s: %s", normalized, exc)
+            logger.info(
+                "Failed to parse %s: %s",
+                normalized,
+                exc,
+            )
             return None
 
         if not parsed.text:
             return None
 
-        return CrawledPage(title=parsed.title, text=parsed.text, links=parsed.links, metadata={
-            **parsed.metadata,
-            "url": fetched.url,
-        })
+        return CrawledPage(
+            title=parsed.title,
+            text=parsed.text,
+            links=parsed.links,
+            metadata={
+                **parsed.metadata,
+                "url": fetched.url,
+            },
+        )
 
-    def crawl_many(self, urls: List[str], max_concurrency: int = 5) -> List[CrawledPage]:
-        """Crawl a list of URLs concurrently (thread pool -- fetches are I/O bound), skipping failures."""
+    def crawl_many(
+        self,
+        urls: List[str],
+        max_concurrency: int = 5,
+    ) -> List[CrawledPage]:
+        """
+        Crawl a list of URLs concurrently.
+        """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         pages: List[CrawledPage] = []
+
         if not urls:
             return pages
-        with ThreadPoolExecutor(max_workers=max(1, max_concurrency)) as executor:
-            futures = {executor.submit(self.crawl_url, url): url for url in urls}
+
+        with ThreadPoolExecutor(
+            max_workers=max(1, max_concurrency)
+        ) as executor:
+            futures = {
+                executor.submit(self.crawl_url, url): url
+                for url in urls
+            }
+
             for future in as_completed(futures):
                 try:
                     page = future.result()
                 except Exception as exc:
-                    logger.info("Crawl task for %s raised: %s", futures[future], exc)
+                    logger.info(
+                        "Crawl task for %s raised: %s",
+                        futures[future],
+                        exc,
+                    )
                     continue
+
                 if page is not None:
                     pages.append(page)
+
         return pages
