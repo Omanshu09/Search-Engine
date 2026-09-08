@@ -86,14 +86,6 @@ class PageFetcher:
             except (httpx.HTTPError, FetchError) as exc:
                 last_error = exc
 
-                logger_message = (
-                    f"Fetch attempt {attempt + 1}/3 failed "
-                    f"for {url}: {exc}"
-                )
-
-                # Avoid introducing another project-level logger
-                # dependency here; failures are raised with context
-                # after retries are exhausted.
                 if attempt < 2:
                     time.sleep(1.5 * (attempt + 1))
                 else:
