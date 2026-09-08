@@ -11,7 +11,10 @@ import re
 from typing import List
 
 from backend.ai.llm import LLMClient
+from backend.utils.logging import get_logger
 from backend.utils.text import split_sentences
+
+logger = get_logger(__name__)
 
 _NUMBER_OR_DATE_RE = re.compile(r"\d")
 
@@ -34,7 +37,11 @@ class ClaimExtractor:
         )
         try:
             raw = self.llm_client.complete(prompt, max_tokens=500)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "LLM claim extraction failed (%s: %s); falling back to heuristic extraction.",
+                type(exc).__name__, exc,
+            )
             return self._extract_heuristic(source_text)
         claims = [line.strip("-* \t") for line in raw.splitlines() if line.strip()]
         return claims[: self.max_claims]

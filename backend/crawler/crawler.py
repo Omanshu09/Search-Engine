@@ -61,7 +61,25 @@ class Crawler:
                     if url:
                         urls.append(self.url_manager.normalize(url))
         except Exception as exc:
-            logger.warning("Seed URL discovery failed for %r: %s", query, exc)
+            # ddgs (DuckDuckGo scraping) is the one external dependency here,
+            # and it breaks *often* -- DDG rate-limits scrapers (look for
+            # "Ratelimit"/"403" in the message below) and occasionally
+            # changes its markup, both of which ddgs releases chase with
+            # breaking version bumps. requirements.txt pins ">=9.0.0" (a
+            # floating minimum), so a redeploy that reinstalls dependencies
+            # can silently pick up a newer ddgs that behaves differently --
+            # with no change to this repo's own code.
+            logger.warning(
+                "Seed URL discovery failed for %r (%s: %s). If this recurs, "
+                "check the installed ddgs version and DuckDuckGo rate limits.",
+                query, type(exc).__name__, exc,
+            )
+        if not urls:
+            logger.warning(
+                "No seed URLs found for %r -- search/research results for this "
+                "query will be empty or fall back to extractive/no-evidence answers.",
+                query,
+            )
         return urls
 
     def crawl_url(self, url: str) -> Optional[CrawledPage]:

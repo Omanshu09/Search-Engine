@@ -13,7 +13,15 @@ from backend.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-4-5",
+    # NOTE: always use the full dated model id, not a bare alias like
+    # "claude-sonnet-4-5". Anthropic periodically retires/repoints model
+    # identifiers; a bare alias that stops resolving fails every LLM call,
+    # which RAGSynthesizer/ClaimExtractor silently swallow and fall back
+    # from -- so answers quietly degrade to crude extractive text with no
+    # visible error. Check
+    # https://platform.claude.com/docs/en/about-claude/model-deprecations
+    # periodically and update this if the model is deprecated.
+    "anthropic": "claude-sonnet-4-5-20250929",
     "openai": "gpt-4o-mini",
 }
 

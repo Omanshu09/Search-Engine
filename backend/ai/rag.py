@@ -9,6 +9,9 @@ configured, per the project's "don't depend entirely on an LLM" principle.
 from typing import List
 
 from backend.ai.llm import LLMClient
+from backend.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class RAGSynthesizer:
@@ -37,7 +40,12 @@ class RAGSynthesizer:
         )
         try:
             return self.llm_client.complete(prompt, max_tokens=700).strip()
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "LLM synthesis failed (%s: %s); falling back to extractive answer. "
+                "Check LLM_PROVIDER/LLM_API_KEY/LLM_MODEL and provider status.",
+                type(exc).__name__, exc,
+            )
             return self._extractive_fallback(evidence)
 
     def _extractive_fallback(self, evidence: List[dict]) -> str:
