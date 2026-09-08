@@ -40,40 +40,89 @@ class Crawler:
         self.page_fetcher = page_fetcher
         self.html_parser = html_parser
 
-    def discover_seed_urls(self, query: str, limit: int = 8) -> List[str]:
-        """
-        Find candidate URLs for a query using a lightweight web-search
-        library (no API key required). This is the *only* place ATLAS
-        leans on an external search provider -- purely for URL discovery,
-        not for ranking or answer synthesis.
-        """
-        try:
-            from ddgs import DDGS
-        except ImportError:
-            logger.error("ddgs is not installed; cannot discover seed URLs. pip install ddgs")
-            return []
+def discover_seed_urls(self, query: str, limit: int = 8) -> List[str]:
+    """
+    Find candidate URLs using DDGS with explicit search-provider
+    fallback order.
 
-        urls: List[str] = []
+    DDGS is only used for URL discovery. ATLAS performs the actual
+    fetching, parsing, indexing, and ranking.
+    """
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        logger.error(
+            "ddgs is not installed; cannot discover seed URLs. "
+            "pip install ddgs"
+        )
+        return []
+
+    urls: List[str] = []
+
+    # Try independent search providers explicitly instead of relying
+    # on DDGS's automatic provider selection. This is important on
+    # hosted environments where one provider may timeout or terminate
+    # TLS connections.
+    backends = [
+        "bing",
+        "brave",
+        "google",
+        "mojeek",
+        "startpage",
+    ]
+
+    for backend in backends:
         try:
-            with DDGS() as ddgs:
-                for result in ddgs.text(query, max_results=limit):
-                    url = result.get("href") or result.get("url")
-                    if url:
-                        urls.append(self.url_manager.normalize(url))
-        except Exception as exc:
-            # ddgs (DuckDuckGo scraping) is the one external dependency here,
-            # and it breaks *often* -- DDG rate-limits scrapers (look for
-            # "Ratelimit"/"403" in the message below) and occasionally
-            # changes its markup, both of which ddgs releases chase with
-            # breaking version bumps. requirements.txt pins ">=9.0.0" (a
-            # floating minimum), so a redeploy that reinstalls dependencies
-            # can silently pick up a newer ddgs that behaves differently --
-            # with no change to this repo's own code.
-            logger.warning(
-                "Seed URL discovery failed for %r (%s: %s). If this recurs, "
-                "check the installed ddgs version and DuckDuckGo rate limits.",
-                query, type(exc).__name__, exc,
+            logger.info(
+                "Searching %r using DDGS backend=%s",
+                query,
+                backend,
             )
+
+            with DDGS(timeout=8) as ddgs:
+                results = ddgs.text(
+                    query,
+                    max_results=limit,
+                    backend=backend,
+                )
+
+            for result in results:
+                url = result.get("href") or result.get("url")
+                if not url:
+                    continue
+
+                normalized = self.url_manager.normalize(url)
+
+                if normalized and normalized not in urls:
+                    urls.append(normalized)
+
+                if len(urls) >= limit:
+                    break
+
+            if urls:
+                logger.info(
+                    "Discovered %d seed URLs for %r using backend=%s",
+                    len(urls),
+                    query,
+                    backend,
+                )
+                return urls
+
+        except Exception as exc:
+            logger.warning(
+                "DDGS backend=%s failed for %r (%s: %s); trying next backend",
+                backend,
+                query,
+                type(exc).__name__,
+                exc,
+            )
+
+    logger.warning(
+        "All DDGS search backends failed for %r; no seed URLs found.",
+        query,
+    )
+
+    return urls
         if not urls:
             logger.warning(
                 "No seed URLs found for %r -- search/research results for this "
