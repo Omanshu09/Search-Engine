@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://search-engine-backend-gkt4.onrender.com/api/:path*"
+    }
+  ]
+}
