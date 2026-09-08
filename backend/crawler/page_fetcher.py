@@ -1,11 +1,22 @@
-import time
+"""
+HTTP fetching for the crawler.
+
+Synchronous httpx client with timeouts, redirects, and a fixed User-Agent,
+so crawler.py doesn't deal with transport concerns directly. Kept
+synchronous (rather than async) so it can be called directly from FastAPI's
+sync route handlers, which run in a threadpool.
+"""
 from dataclasses import dataclass
 
 import httpx
 
+from backend.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class FetchError(Exception):
-    pass
+    """Raised when a page cannot be fetched."""
 
 
 @dataclass
@@ -17,83 +28,30 @@ class FetchResult:
 
 
 class PageFetcher:
-    def __init__(
-        self,
-        user_agent: str,
-        timeout_seconds: int = 10,
-    ):
+    def __init__(self, user_agent: str, timeout_seconds: int = 10):
         self.user_agent = user_agent
         self.timeout_seconds = timeout_seconds
 
     def fetch(self, url: str) -> FetchResult:
-        """
-        Fetch an HTML/text page with retries.
+        try:
+            response = httpx.get(
+                url,
+                headers={"User-Agent": self.user_agent},
+                timeout=self.timeout_seconds,
+                follow_redirects=True,
+            )
+        except httpx.HTTPError as exc:
+            raise FetchError(f"Failed to fetch {url}: {exc}") from exc
 
-        Hosted environments can experience transient connection resets
-        or slow upstream responses. Retry a failed request before giving
-        up, while keeping the crawler limited to text/HTML content.
-        """
+        content_type = response.headers.get("content-type", "")
+        if response.status_code >= 400:
+            raise FetchError(f"Fetch {url} returned status {response.status_code}")
+        if "text/html" not in content_type and "text" not in content_type:
+            raise FetchError(f"Skipping non-text content at {url} ({content_type})")
 
-        headers = {
-            "User-Agent": self.user_agent,
-            "Accept": (
-                "text/html,application/xhtml+xml,"
-                "application/xml;q=0.9,*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Connection": "keep-alive",
-        }
-
-        last_error = None
-
-        for attempt in range(3):
-            try:
-                response = httpx.get(
-                    url,
-                    headers=headers,
-                    timeout=20,
-                    follow_redirects=True,
-                    http2=False,
-                )
-
-                content_type = response.headers.get(
-                    "content-type",
-                    "",
-                ).lower()
-
-                if response.status_code >= 400:
-                    raise FetchError(
-                        f"Fetch {url} returned status "
-                        f"{response.status_code}"
-                    )
-
-                if (
-                    "text/html" not in content_type
-                    and "text" not in content_type
-                ):
-                    raise FetchError(
-                        f"Skipping non-text content at {url} "
-                        f"({content_type})"
-                    )
-
-                return FetchResult(
-                    url=str(response.url),
-                    status_code=response.status_code,
-                    content=response.text,
-                    content_type=content_type,
-                )
-
-            except (httpx.HTTPError, FetchError) as exc:
-                last_error = exc
-
-                if attempt < 2:
-                    time.sleep(1.5 * (attempt + 1))
-                else:
-                    raise FetchError(
-                        f"Failed to fetch {url} after 3 attempts: "
-                        f"{last_error}"
-                    ) from exc
-
-        raise FetchError(
-            f"Failed to fetch {url}: {last_error}"
+        return FetchResult(
+            url=str(response.url),
+            status_code=response.status_code,
+            content=response.text,
+            content_type=content_type,
         )
