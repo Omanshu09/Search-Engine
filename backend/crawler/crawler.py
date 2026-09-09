@@ -39,7 +39,7 @@ class Crawler:
         self.page_fetcher = page_fetcher
         self.html_parser = html_parser
 
-    def discover_seed_urls(self, query: str, limit: int = 8) -> List[str]:
+    def discover_seed_urls(self, query: str, limit: int = 15) -> List[str]:
         """
         Find candidate URLs using DDGS with explicit search-provider
         fallback order.
