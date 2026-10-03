@@ -1,5 +1,4 @@
-# Local orchestration for backend + frontend during development.
-# TODO: add postgres/redis/kafka services here once those layers are introduced.
+
 services:
   backend:
     build: .
