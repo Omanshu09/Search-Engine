@@ -1,4 +1,4 @@
-# Backend-only Dockerfile. Frontend is built/served separately (see README).
+
 FROM python:3.11-slim
 
 WORKDIR /app
