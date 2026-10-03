@@ -4,7 +4,7 @@ from backend.core.ranking_engine import RankingEngine
 
 
 def test_hashing_embedding_is_deterministic_and_normalized():
-    client = EmbeddingClient()  # no model_name -> local hashing fallback
+    client = EmbeddingClient()  
     v1 = client.embed("atlas search engine")
     v2 = client.embed("atlas search engine")
     assert v1 == v2
